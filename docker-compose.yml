@@ -1,0 +1,15 @@
+services:
+  gear-moss-tts:
+    image: ghcr.io/gearinger/gear-moss-tts-docker:latest
+    container_name: gear-moss-tts
+    restart: unless-stopped
+    ports:
+      - "7860:7860"
+    environment:
+      - GRADIO_SERVER_NAME=0.0.0.0
+      - GRADIO_SERVER_PORT=7860
+      - GRADIO_SHOW_API=true
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./moss_model_cache:/root/.cache
+      - ./moss_model:/app/models
