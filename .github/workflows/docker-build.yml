@@ -16,7 +16,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: gear-moss-tts
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   build:
@@ -29,7 +29,7 @@ jobs:
           - platform: linux/amd64
             runner: ubuntu-latest
           - platform: linux/arm64
-            runner: ubuntu-24.04-arm # 原生 ARM64 机器，速度飞快
+            runner: ubuntu-24.04-arm # 原生 ARM64 Runner
 
     permissions:
       contents: read
@@ -56,7 +56,6 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
 
-      # 使用 format() 正确拼接 outputs 字符串
       - name: Build and push by digest
         id: build
         uses: docker/build-push-action@v6
@@ -68,6 +67,24 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.platform }}
           cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
 
+      # 1. 将本次构建生成的 Digest 写入临时目录
+      - name: Export digest
+        if: github.event_name != 'pull_request'
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      # 2. 将 Digest 文件上传为 GitHub Artifact
+      - name: Upload digest artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.runner }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
   merge:
     name: Merge platform images
     runs-on: ubuntu-latest
@@ -76,6 +93,14 @@ jobs:
     permissions:
       packages: write
     steps:
+      # 3. 下载 build 阶段上传的所有 Digest 产物
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -96,7 +121,9 @@ jobs:
             type=semver,pattern={{version}}
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 
+      # 4. 动态读取所有 Digest 文件并自动拼接成合规的镜像 Manifest 推送
       - name: Create manifest list and push
         run: |
+          cd /tmp/digests
           docker buildx imagetools create $(jq -r '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.build.outputs.digest }}
+            $(printf '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@sha256:%s ' *)
