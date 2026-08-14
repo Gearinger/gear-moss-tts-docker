@@ -6,7 +6,7 @@ on:
       - main
     tags:
       - 'v*'
-    paths-ignore: # 忽略文档修改，节省构建额度
+    paths-ignore:
       - '**.md'
       - '.gitignore'
   pull_request:
@@ -29,7 +29,7 @@ jobs:
           - platform: linux/amd64
             runner: ubuntu-latest
           - platform: linux/arm64
-            runner: ubuntu-24.04-arm # 使用 GitHub 免费的原生 ARM64 机器，编译速度提升数倍！
+            runner: ubuntu-24.04-arm # 原生 ARM64 机器，速度飞快
 
     permissions:
       contents: read
@@ -39,7 +39,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 使用 Docker Buildx
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -57,7 +56,7 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
 
-      # 采用 by-digest 方式构建，支持并发无缝拼接 Multi-arch 镜像
+      # 使用 format() 正确拼接 outputs 字符串
       - name: Build and push by digest
         id: build
         uses: docker/build-push-action@v6
@@ -65,12 +64,10 @@ jobs:
           context: .
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
-          # 仅在非 PR 时推送
-          outputs: ${{ github.event_name != 'pull_request' && 'type=image,name=' && env.REGISTRY && '/' && env.IMAGE_NAME && ',push-by-digest=true,name-canonical=true' || 'type=check' }}
+          outputs: ${{ github.event_name != 'pull_request' && format('type=image,name={0}/{1},push-by-digest=true,name-canonical=true', env.REGISTRY, env.IMAGE_NAME) || 'type=check' }}
           cache-from: type=gha,scope=${{ matrix.platform }}
           cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
 
-  # 合并镜像 Tag 的 Job
   merge:
     name: Merge platform images
     runs-on: ubuntu-latest
@@ -99,7 +96,6 @@ jobs:
             type=semver,pattern={{version}}
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 
-      # 一键将 amd64 和 arm64 合并为一个多架构 Manifest
       - name: Create manifest list and push
         run: |
           docker buildx imagetools create $(jq -r '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
