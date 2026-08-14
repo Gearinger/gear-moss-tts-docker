@@ -16,7 +16,6 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   build:
@@ -38,6 +37,11 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      # 将仓库名强制转换为全小写，避免 GHCR 报错
+      - name: Set lower case image name
+        run: |
+          echo "IMAGE_NAME=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -67,7 +71,6 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.platform }}
           cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
 
-      # 1. 将本次构建生成的 Digest 写入临时目录
       - name: Export digest
         if: github.event_name != 'pull_request'
         run: |
@@ -75,7 +78,6 @@ jobs:
           digest="${{ steps.build.outputs.digest }}"
           touch "/tmp/digests/${digest#sha256:}"
 
-      # 2. 将 Digest 文件上传为 GitHub Artifact
       - name: Upload digest artifact
         if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
@@ -93,7 +95,14 @@ jobs:
     permissions:
       packages: write
     steps:
-      # 3. 下载 build 阶段上传的所有 Digest 产物
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # merge 阶段也同步转为全小写
+      - name: Set lower case image name
+        run: |
+          echo "IMAGE_NAME=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
+
       - name: Download digests
         uses: actions/download-artifact@v4
         with:
@@ -121,7 +130,6 @@ jobs:
             type=semver,pattern={{version}}
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 
-      # 4. 动态读取所有 Digest 文件并自动拼接成合规的镜像 Manifest 推送
       - name: Create manifest list and push
         run: |
           cd /tmp/digests
